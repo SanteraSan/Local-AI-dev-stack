@@ -15,6 +15,11 @@ class SecretRejected(ValueError):
         super().__init__(f"rejected: content matches secret pattern '{pattern_type}'")
 
 
+# Name of a credential field. Prefixed forms such as PG_PASSWORD still match
+# because the keyword does not need to start the token. `token` does not match
+# `tokens`, so `max_tokens=512` stays ordinary text.
+_SECRET_NAME = r"password|passwd|secret|token|api[_-]?key"
+
 # More specific tokens come first so the reported type is the tightest match.
 _PATTERNS: tuple[tuple[str, re.Pattern[str]], ...] = (
     ("aws_access_key", re.compile(r"\bAKIA[0-9A-Z]{16}\b")),
@@ -27,8 +32,18 @@ _PATTERNS: tuple[tuple[str, re.Pattern[str]], ...] = (
         re.compile(r"\beyJ[A-Za-z0-9_-]{8,}\.eyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\b"),
     ),
     (
+        "url_credentials",
+        # scheme://user:password@host. A user without a password has no colon
+        # before '@', so `postgresql://devai@host/db` is not a match.
+        re.compile(r"[A-Za-z][A-Za-z0-9+.-]*://[^\s/:@]+:[^\s/@]+@"),
+    ),
+    (
         "secret_assignment",
-        re.compile(r"(?i)(?:password|passwd|secret|token)\s*=\s*\S"),
+        re.compile(
+            rf"(?i)(?:(?:{_SECRET_NAME})\s*=\s*\S|"
+            rf"[\"'](?:{_SECRET_NAME})[\"']\s*:\s*[\"'][^\"']+[\"']|"
+            rf"(?:{_SECRET_NAME})\s*:\s*[\"'][^\"']+[\"'])"
+        ),
     ),
 )
 
