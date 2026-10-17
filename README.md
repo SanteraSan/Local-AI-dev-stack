@@ -10,7 +10,7 @@
 | --- | --- | --- |
 | 1 | Настройка Ollama, Modelfile, `warmup.sh` | Готово |
 | 2 | Postgres + pgvector, шлюз LiteLLM, Open WebUI | Готово, без облачного fallback |
-| 3 | MCP-сервер памяти `devmem` | Не начато |
+| 3 | MCP-сервер памяти `devmem` | Готово, systemd-юнит ставится вручную |
 | 4 | Клиенты: Cursor, Continue, Roo Code, OpenCode / Aider | Не начато |
 | 5 | Шаблон `AGENTS.md` и `bootstrap-project.sh` | Не начато |
 | 6 | Бенчмарк моделей по ролям | Не начато |
@@ -63,7 +63,7 @@ docker compose up -d open-webui   # пересоздать, чтобы Open WebU
 | --- | --- | --- |
 | LiteLLM | `http://127.0.0.1:4000/v1`, админка `http://127.0.0.1:4000/ui` (вход по `LITELLM_MASTER_KEY`) | 1.105.1 |
 | Open WebUI | `http://127.0.0.1:3001`, первый зарегистрированный пользователь — администратор | 0.12.3 |
-| Postgres + pgvector | `127.0.0.1:5442`, базы `litellm` и `devmem` | 16.15, pgvector 0.8.7 |
+| Postgres + pgvector | `127.0.0.1:5442`, базы `litellm`, `devmem` и `devmem_test` | 16.15, pgvector 0.8.7 |
 
 Образы закреплены по digest в `docker-compose.yml`. Обновление — осознанное: поменять digest, поднять стек, прогнать проверки ниже.
 
@@ -104,6 +104,79 @@ ollama ps   # coder и fast должны остаться Forever после з�
 sudo systemctl edit ollama   # вставить содержимое файла
 sudo systemctl daemon-reload && sudo systemctl restart ollama
 systemctl show ollama -p Environment | tr ' ' '\n' | grep OLLAMA_
+```
+
+## Память devmem
+
+MCP-сервер общей памяти агентов: решения, итоги шагов, уроки, задачи и handoff между сессиями, клиентами и моделями. Streamable HTTP на `http://127.0.0.1:8765/mcp`, каждый запрос с `Authorization: Bearer $DEVMEM_TOKEN`. Данные — база `devmem` в Postgres, эмбеддинги — через шлюз (`embed`, ключ `LITELLM_DEVMEM_KEY`), не напрямую в Ollama.
+
+Память — контекст, а не доказательство. Каждый ответ поиска и бриф начинается с `context, verify against code`, у записи есть `commit_sha`.
+
+### Установка и запуск
+
+```bash
+cd devmem
+uv sync --extra dev               # Python 3.12, зависимости из uv.lock
+.venv/bin/devmem migrate          # схема в базе из DEVMEM_DATABASE_URL, повторный запуск ничего не делает
+.venv/bin/devmem serve            # 127.0.0.1:8765/mcp; --stdio — запасной режим
+```
+
+Настройки читаются из `.env` в корне репозитория, переменные окружения их перекрывают. Если в shell осталась `DEVMEM_DATABASE_URL` от тестов, команды пойдут в другую базу: проверяйте строку `on database ...` у `migrate`.
+
+systemd-юнит (`devmem/systemd/devmem.service`) ставится от своего пользователя, не от root:
+
+```bash
+mkdir -p ~/.config/systemd/user
+cp devmem/systemd/devmem.service ~/.config/systemd/user/
+systemctl --user daemon-reload
+systemctl --user enable --now devmem
+systemctl --user status devmem
+ss -ltn | grep 8765               # должен быть только 127.0.0.1:8765
+```
+
+### Инструменты MCP
+
+| Инструмент | Что делает |
+| --- | --- |
+| `memory_start_session(project, task_title?)` | Регистрирует проект, возвращает бриф: последний handoff, открытые задачи, решения, уроки; около 1500 токенов |
+| `memory_search(query, project, kinds?, task_id?, k=8)` | Гибридный поиск: полнотекст `simple` и вектор, слияние RRF; `superseded` исключены |
+| `memory_save(project, kind, content, task_id?, refs?, commit_sha?)` | Запись в зарегистрированный проект, секреты отклоняются |
+| `memory_supersede(entry_id, new_content, reason)` | Старая запись помечается заменённой, история сохраняется |
+| `task_create`, `task_update`, `task_list` | Задачи: `open`, `in_progress`, `done`, `dropped` |
+| `memory_handoff(task_id, summary, next_steps, open_questions)` | Итог при смене модели или конце сессии |
+
+Ресурс: `devmem://project/{slug}/brief`. Формат ответа — `DEVMEM_RESPONSE_FORMAT` (`json` по умолчанию, `toon`, `csv`) или параметр `fmt` у инструментов.
+
+Поле `client` у записи заполняется из заголовка `X-Devmem-Client`, поле `model` — из `X-Devmem-Model`. Сервер работает без сессий, поэтому `clientInfo` из `initialize` до вызовов инструментов не доходит: клиенту нужно передавать заголовки в конфиге (фаза 4).
+
+### CLI
+
+```bash
+D=devmem/.venv/bin/devmem
+$D project add --slug taskflow --root ~/Projects
+$D import --project taskflow --path research/LESSONS_LEARNED.md --kind lesson   # повторный импорт не плодит дубли
+$D import --project taskflow --glob ".cursor/plans/*.md" --kind imported
+$D search --project taskflow --query "PostgreSQL слой для RAG logs" --k 5 [--fmt toon]
+$D export --project taskflow > devmem/exports/taskflow.jsonl                     # каталог в .gitignore
+$D reindex [--project taskflow]                                                  # после смены модели эмбеддингов
+```
+
+Импорт режет Markdown по заголовкам. Путь файла внутри корня проекта хранится относительным, хеш считается от пути и текста.
+
+### Проверки
+
+```bash
+cd devmem && uv run pytest -q     # unit + интеграционные на devmem_test
+set -a; . ../.env; set +a
+npx -y @modelcontextprotocol/inspector --cli http://127.0.0.1:8765/mcp --transport http \
+  --method tools/list --header "Authorization: Bearer $DEVMEM_TOKEN"
+```
+
+Интеграционные тесты работают только с базой, имя которой оканчивается на `_test` (по умолчанию `devmem_test`, переопределяется `DEVMEM_TEST_DATABASE_URL`). Создать её один раз:
+
+```bash
+docker compose exec -T postgres psql -U devai -d postgres -c 'CREATE DATABASE devmem_test'
+docker compose exec -T postgres psql -U devai -d devmem_test -c 'CREATE EXTENSION IF NOT EXISTS vector'
 ```
 
 ## Порты
