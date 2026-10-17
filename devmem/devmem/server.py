@@ -28,13 +28,16 @@ from devmem.db import (
     create_task,
     ensure_project,
     ensure_task,
+    existing_content_hashes,
     export_project,
     get_pool,
     hybrid_search,
     import_sections,
     list_tasks,
+    read_connection,
     require_kind,
     require_project,
+    require_registered_target,
     save_entry,
     supersede_entry,
     task_context,
@@ -42,6 +45,7 @@ from devmem.db import (
 )
 from devmem.embeddings import try_embed
 from devmem.secrets_filter import reject_secrets_in
+from devmem.search import embed_query
 from devmem.serialize import assemble_brief, encode_table, format_response, serialize
 
 _client_var: ContextVar[str | None] = ContextVar("devmem_client", default=None)
@@ -224,6 +228,11 @@ def search_memory(
     k: int = 8,
     fmt: str | None = None,
 ) -> str:
+    if not query or not str(query).strip():
+        raise ValueError("query is empty")
+    # A pasted secret must not reach the embedding gateway.
+    reject_secrets_in(query)
+    vector, note = embed_query(query.strip())
     with connection() as conn:
         entries, note = hybrid_search(
             conn,
@@ -232,6 +241,8 @@ def search_memory(
             kinds=kinds,
             task_id=task_id,
             k=k,
+            embedding=vector,
+            note=note,
         )
     body = serialize(entries, _fmt(fmt), content_limit=_limit())
     return format_response(body, note=note)
@@ -254,6 +265,8 @@ def save_memory(
         raise ValueError(f"invalid source {source!r}")
     if not content or not str(content).strip():
         raise ValueError("content is empty")
+    with read_connection() as conn:
+        require_registered_target(conn, project, task_id)
     vector, note = _embed_checked(content, refs, commit_sha)
     with connection() as conn:
         result = save_entry(
@@ -369,6 +382,8 @@ def handoff_memory(
         f"next_steps:\n{next_steps.strip()}\n\n"
         f"open_questions:\n{open_questions.strip()}"
     )
+    with read_connection() as conn:
+        task_context(conn, task_id)
     vector, note = _embed_checked(summary, next_steps, open_questions, content)
     with connection() as conn:
         _task, project = task_context(conn, task_id)
@@ -403,13 +418,29 @@ def project_root_path(slug: str) -> str | None:
 
 def import_prepared(project: str, sections, kind: str) -> dict:
     require_kind(kind)
-    for section in sections:
-        reject_secrets_in(section.content, section.source_path)
-    vectors: list[list[float] | None] = []
+    with read_connection() as conn:
+        stored = existing_content_hashes(
+            conn,
+            project,
+            [section.content_hash for section in sections],
+        )
+    vectors: list[list[float] | None] = [None] * len(sections)
+    pending: list[int] = []
+    seen: set[str] = set()
+    for index, section in enumerate(sections):
+        digest = section.content_hash
+        if digest and (digest in stored or digest in seen):
+            continue
+        if digest:
+            seen.add(digest)
+        pending.append(index)
+    # Secrets are rejected before any of the new text is embedded.
+    for index in pending:
+        reject_secrets_in(sections[index].content, sections[index].source_path)
     note = None
-    for section in sections:
-        vector, section_note = try_embed(section.content)
-        vectors.append(vector)
+    for index in pending:
+        vector, section_note = try_embed(sections[index].content)
+        vectors[index] = vector
         if section_note and note is None:
             note = section_note
     with connection() as conn:

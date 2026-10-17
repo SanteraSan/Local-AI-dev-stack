@@ -7,6 +7,7 @@ from pgvector.psycopg import register_vector
 from psycopg.rows import dict_row
 
 from devmem.config import assert_test_database, derive_test_database_url, get_settings
+from devmem.embeddings import try_embed
 from devmem.db import apply_migrations, close_pool, connection, count_entries, truncate_all
 from devmem.importer import ImportSection, prepare_file
 from devmem.secrets_filter import SecretRejected
@@ -137,7 +138,7 @@ def test_save_search_supersede_handoff_and_brief(db):
     assert "abc1234" not in brief
 
 
-def test_import_twice_is_deduplicated(db, tmp_path: Path):
+def test_import_twice_is_deduplicated(db, tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
     root = tmp_path
     folder = root / "research"
     folder.mkdir()
@@ -155,7 +156,15 @@ def test_import_twice_is_deduplicated(db, tmp_path: Path):
     assert via_absolute[0].source_path == "research/synthetic-notes.md"
     assert via_relative[0].content_hash == via_absolute[0].content_hash
     first = import_prepared("phase3import", via_absolute, "imported")
+    embed_calls = {"n": 0}
+
+    def counting(text: str):
+        embed_calls["n"] += 1
+        return try_embed(text)
+
+    monkeypatch.setattr("devmem.server.try_embed", counting)
     second = import_prepared("phase3import", via_relative, "imported")
+    assert embed_calls["n"] == 0
     assert first["inserted"] == 2
     assert second["inserted"] == 0
     assert second["skipped"] == 2
@@ -177,11 +186,19 @@ def test_import_twice_is_deduplicated(db, tmp_path: Path):
     assert row["content_hash"]
 
 
-def test_unregistered_project_is_rejected(db):
+def test_unregistered_project_is_rejected(db, monkeypatch: pytest.MonkeyPatch):
     from devmem.db import ProjectNotRegistered
 
+    calls: list[str] = []
+
+    def counting(text: str):
+        calls.append(text)
+        return try_embed(text)
+
+    monkeypatch.setattr("devmem.server.try_embed", counting)
     with pytest.raises(ProjectNotRegistered, match="not registered"):
         save_memory("not-registered-zz", "fact", "this should not be stored")
+    assert calls == []
 
 
 def test_secrets_are_rejected_on_write_paths(db, tmp_path: Path):

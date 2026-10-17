@@ -27,7 +27,6 @@ from devmem.config import (
 from devmem.importer import ImportSection
 from devmem.search import (
     candidate_limit,
-    embed_query,
     full_text_ids,
     fuse_ids,
     search_settings_rrf_k,
@@ -182,6 +181,16 @@ def connection():
             yield conn
 
 
+@contextmanager
+def read_connection():
+    """Short read-only transaction. Callers embed only after this returns."""
+    pool = get_pool()
+    with pool.connection() as conn:
+        with conn.transaction():
+            conn.execute("SET TRANSACTION READ ONLY")
+            yield conn
+
+
 def _iso(value: datetime | None) -> str | None:
     if value is None:
         return None
@@ -305,6 +314,39 @@ def _insert_entry(
     if row is None:
         return None
     return _entry_from_row(row)
+
+
+def existing_content_hashes(
+    conn: psycopg.Connection,
+    project: str,
+    hashes: list[str],
+) -> set[str]:
+    """Hashes already stored for this project. Also checks that the project exists."""
+    project_row = require_project(conn, project)
+    wanted = [item for item in hashes if item]
+    if not wanted:
+        return set()
+    rows = conn.execute(
+        """
+        SELECT content_hash
+        FROM entries
+        WHERE project_id = %s AND content_hash = ANY(%s)
+        """,
+        (project_row["id"], wanted),
+    ).fetchall()
+    return {row["content_hash"] for row in rows if row["content_hash"]}
+
+
+def require_registered_target(
+    conn: psycopg.Connection,
+    project: str,
+    task_id: int | None = None,
+) -> dict:
+    """Fail before an embedding call when the project or task is unknown."""
+    project_row = require_project(conn, project)
+    if task_id is not None:
+        _require_task_in_project(conn, task_id, project_row["id"])
+    return project_row
 
 
 def require_project(conn: psycopg.Connection, slug: str) -> dict:
@@ -601,7 +643,14 @@ def hybrid_search(
     kinds: list[str] | None,
     task_id: int | None,
     k: int,
+    embedding: list[float] | None,
+    note: str | None,
 ) -> tuple[list[dict], str | None]:
+    """Fuse full text with an already computed query vector.
+
+    The caller embeds before opening this connection. `embedding is None`
+    means full-text only; `note` explains that degradation.
+    """
     if not query or not query.strip():
         raise ValueError("query is empty")
     k = require_k(k)
@@ -611,10 +660,9 @@ def hybrid_search(
         _require_task_in_project(conn, task_id, project_row["id"])
     limit = candidate_limit(k)
     text_ids = full_text_ids(conn, project_row["id"], query.strip(), kinds, task_id, limit)
-    vector, note = embed_query(query.strip())
     ranked_vectors = None
-    if vector is not None:
-        ranked_vectors = vector_ids(conn, project_row["id"], vector, kinds, task_id, limit)
+    if embedding is not None:
+        ranked_vectors = vector_ids(conn, project_row["id"], embedding, kinds, task_id, limit)
     fused = fuse_ids(text_ids, ranked_vectors, k=k, rrf_k=search_settings_rrf_k())
     return entries_by_ids(conn, fused), note
 
