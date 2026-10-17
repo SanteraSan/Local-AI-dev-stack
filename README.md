@@ -25,30 +25,44 @@ RTX 5070 Ti 16 ГБ, Ryzen 9 9950X3D, 59 ГБ ОЗУ, Ollama 0.31.1 как syste
 
 | Псевдоним | Модель Ollama | Где живёт | Роль |
 | --- | --- | --- | --- |
-| `coder` | `qwen2.5-coder-14b-32k` | GPU, резидентная, 12 ГБ | Код, агент |
+| `coder` | `qwen2.5-coder-14b-32k` | GPU, резидентная, 12 ГБ | Код и правки без инструментов |
+| `agent` | `qwen3-14b-32k` | GPU, резидентная, 11 ГБ | Агенты с tool calling |
 | `fast` | `qwen2.5-coder-3b-4k` | GPU, резидентная, 2,1 ГБ | Автодополнение |
 | `reasoner` | `qwen3:14b` | GPU, по запросу | План, декомпозиция |
 | `reviewer` | `gemma4:12b` | GPU, по запросу | Ревью |
 | `vision` | `qwen3-vl:8b` | GPU, по запросу | Изображения |
 | `embed` | `nomic-embed-text-cpu` | CPU | Эмбеддинги, 768 измерений |
 
+`coder` и `agent` резидентны по очереди: вместе с `fast` в 16 ГБ помещается только одна большая модель.
+
 Варианты моделей собираются из `ollama/modelfiles/`:
 
 ```bash
 ollama create qwen2.5-coder-14b-32k -f ollama/modelfiles/coder-32k.Modelfile
+ollama create qwen3-14b-32k         -f ollama/modelfiles/qwen3-14b-32k.Modelfile
 ollama create qwen2.5-coder-3b-4k   -f ollama/modelfiles/fast-4k.Modelfile
 ollama create nomic-embed-text-cpu  -f ollama/modelfiles/embed-cpu.Modelfile
 ```
 
 ## Прогрев моделей
 
-`coder` должна загружаться раньше `fast`, иначе она может не влезть в видеопамять целиком и частично уйдёт на CPU.
+Большая модель профиля загружается раньше `fast`: Ollama выбирает размещение один раз при загрузке. `coder` и `agent` вместе с `fast` в 16 ГБ не помещаются, в памяти только одна такая пара.
 
 ```bash
-./ollama/warmup.sh
+./ollama/warmup.sh                 # coder, затем fast
+./ollama/warmup.sh agent           # qwen3-14b-32k, затем fast
+./ollama/warmup.sh --force-gpu     # fast с num_gpu=99
 ```
 
-Запускать перед работой и после фаз, где `reasoner` или `reviewer` вытеснили рабочую пару. Скрипт запускается как файл, не вставкой в терминал.
+Если `fast` после загрузки не на 100% GPU, скрипт выгружает её и пробует ещё раз. `--force-gpu` заставляет все слои `fast` на GPU и может завершиться ошибкой, если видеопамяти действительно не хватает.
+
+| Код | Значение |
+| --- | --- |
+| 0 | обе модели 100% GPU |
+| 1 | ошибка загрузки |
+| 2 | модели загружены, но хотя бы одна не целиком на GPU |
+
+Запускать перед работой, после смены профиля и после фаз, где `reasoner` или `reviewer` вытеснили рабочую пару. Скрипт запускается как файл, не вставкой в терминал.
 
 ## Запуск стека
 
@@ -56,6 +70,7 @@ ollama create nomic-embed-text-cpu  -f ollama/modelfiles/embed-cpu.Modelfile
 cp .env.example .env              # только на новой машине; секреты: openssl rand -hex 32
 docker compose up -d              # postgres, litellm, open-webui
 ./litellm/issue-keys.sh           # выпустить виртуальные ключи клиентов в .env
+./litellm/sync-key-models.sh      # обновить список моделей у уже выпущенных ключей
 docker compose up -d open-webui   # пересоздать, чтобы Open WebUI получил свой ключ
 ```
 
@@ -69,7 +84,7 @@ docker compose up -d open-webui   # пересоздать, чтобы Open WebU
 
 ### Виртуальные ключи
 
-У каждого клиента свой ключ: в админке LiteLLM видно, кто сколько запросов сделал, и любой ключ можно отозвать, не трогая остальных. `issue-keys.sh` заполняет только пустые переменные, поэтому повторный запуск не меняет существующие ключи.
+У каждого клиента свой ключ: в админке LiteLLM видно, кто сколько запросов сделал, и любой ключ можно отозвать, не трогая остальных. `issue-keys.sh` заполняет только пустые переменные, поэтому повторный запуск не меняет существующие ключи. Уже выпущенным ключам список моделей обновляет `./litellm/sync-key-models.sh`: ключ не ротируется, повторный запуск ничего не меняет, если список уже совпадает. Полный список — `coder`, `fast`, `reasoner`, `reviewer`, `vision`, `embed`, `agent`. Ключ devmem остаётся только на `embed`.
 
 | Переменная | Клиент | Доступные модели |
 | --- | --- | --- |
@@ -89,7 +104,7 @@ curl -s 127.0.0.1:4000/v1/chat/completions -H "Authorization: Bearer $LITELLM_CO
   -H 'Content-Type: application/json' -d '{"model":"coder","messages":[{"role":"user","content":"Say OK"}]}'
 curl -s 127.0.0.1:4000/v1/embeddings -H "Authorization: Bearer $LITELLM_DEVMEM_KEY" \
   -H 'Content-Type: application/json' -d '{"model":"embed","input":"test"}'
-ollama ps   # coder и fast должны остаться Forever после запросов через шлюз
+ollama ps   # активный профиль (coder или agent) и fast должны остаться Forever
 ```
 
 ### Облачный fallback
