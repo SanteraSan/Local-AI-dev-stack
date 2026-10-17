@@ -9,7 +9,7 @@
 | Фаза | Что | Статус |
 | --- | --- | --- |
 | 1 | Настройка Ollama, Modelfile, `warmup.sh` | Готово |
-| 2 | Postgres + pgvector, шлюз LiteLLM, Open WebUI | Не начато |
+| 2 | Postgres + pgvector, шлюз LiteLLM, Open WebUI | Готово, без облачного fallback |
 | 3 | MCP-сервер памяти `devmem` | Не начато |
 | 4 | Клиенты: Cursor, Continue, Roo Code, OpenCode / Aider | Не начато |
 | 5 | Шаблон `AGENTS.md` и `bootstrap-project.sh` | Не начато |
@@ -49,6 +49,52 @@ ollama create nomic-embed-text-cpu  -f ollama/modelfiles/embed-cpu.Modelfile
 ```
 
 Запускать перед работой и после фаз, где `reasoner` или `reviewer` вытеснили рабочую пару. Скрипт запускается как файл, не вставкой в терминал.
+
+## Запуск стека
+
+```bash
+cp .env.example .env              # только на новой машине; секреты: openssl rand -hex 32
+docker compose up -d              # postgres, litellm, open-webui
+./litellm/issue-keys.sh           # выпустить виртуальные ключи клиентов в .env
+docker compose up -d open-webui   # пересоздать, чтобы Open WebUI получил свой ключ
+```
+
+| Сервис | Адрес | Версия |
+| --- | --- | --- |
+| LiteLLM | `http://127.0.0.1:4000/v1`, админка `http://127.0.0.1:4000/ui` (вход по `LITELLM_MASTER_KEY`) | 1.105.1 |
+| Open WebUI | `http://127.0.0.1:3001`, первый зарегистрированный пользователь — администратор | 0.12.3 |
+| Postgres + pgvector | `127.0.0.1:5442`, базы `litellm` и `devmem` | 16.15, pgvector 0.8.7 |
+
+Образы закреплены по digest в `docker-compose.yml`. Обновление — осознанное: поменять digest, поднять стек, прогнать проверки ниже.
+
+### Виртуальные ключи
+
+У каждого клиента свой ключ: в админке LiteLLM видно, кто сколько запросов сделал, и любой ключ можно отозвать, не трогая остальных. `issue-keys.sh` заполняет только пустые переменные, поэтому повторный запуск не меняет существующие ключи.
+
+| Переменная | Клиент | Доступные модели |
+| --- | --- | --- |
+| `LITELLM_OPENWEBUI_KEY` | Open WebUI | все |
+| `LITELLM_CONTINUE_KEY` | Continue | все |
+| `LITELLM_ROO_KEY` | Roo Code | все |
+| `LITELLM_OPENCODE_KEY` | OpenCode / Aider | все |
+| `LITELLM_TASKFLOW_KEY` | TaskFlow | все |
+| `LITELLM_DEVMEM_KEY` | devmem | только `embed` |
+
+### Проверки
+
+```bash
+set -a; . ./.env; set +a
+curl -s 127.0.0.1:4000/v1/models -H "Authorization: Bearer $LITELLM_CONTINUE_KEY"
+curl -s 127.0.0.1:4000/v1/chat/completions -H "Authorization: Bearer $LITELLM_CONTINUE_KEY" \
+  -H 'Content-Type: application/json' -d '{"model":"coder","messages":[{"role":"user","content":"Say OK"}]}'
+curl -s 127.0.0.1:4000/v1/embeddings -H "Authorization: Bearer $LITELLM_DEVMEM_KEY" \
+  -H 'Content-Type: application/json' -d '{"model":"embed","input":"test"}'
+ollama ps   # coder и fast должны остаться Forever после запросов через шлюз
+```
+
+### Облачный fallback
+
+Пока выключен: нет ключа внешнего провайдера. Чтобы включить — заполнить `OPENROUTER_API_KEY` в `.env`, раскомментировать `coder-cloud` и `fallbacks` в `litellm/config.yaml`, добавить `coder-cloud` в список моделей ключей и выполнить `docker compose up -d litellm`.
 
 ## Настройки Ollama
 

@@ -1,0 +1,66 @@
+name: dev-ai-stack
+
+services:
+  postgres:
+    # PostgreSQL 16.15, pgvector 0.8.7
+    image: pgvector/pgvector:pg16@sha256:7b822b0aac60967beb1ea5e576b8602c94c300a157d187f385ae3e0da199b90a
+    container_name: dev-ai-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: devai
+      POSTGRES_PASSWORD: ${PG_PASSWORD:?set PG_PASSWORD in .env}
+      POSTGRES_DB: devai
+    ports:
+      - "127.0.0.1:5442:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+      - ./postgres/init:/docker-entrypoint-initdb.d:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U devai -d devai"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+  litellm:
+    # LiteLLM 1.105.1
+    image: ghcr.io/berriai/litellm:main-stable@sha256:b7b9e2c306343721802253d0dd9436b9634a2eb4e14da7c7cf06c5c7b7530802
+    container_name: dev-ai-litellm
+    restart: unless-stopped
+    # Ollama listens only on 127.0.0.1 of the host; bridge networking cannot reach it.
+    network_mode: host
+    command: ["--config", "/app/config.yaml", "--host", "127.0.0.1", "--port", "4000"]
+    environment:
+      LITELLM_MASTER_KEY: ${LITELLM_MASTER_KEY:?set LITELLM_MASTER_KEY in .env}
+      DATABASE_URL: ${LITELLM_DATABASE_URL:?set LITELLM_DATABASE_URL in .env}
+      OPENROUTER_API_KEY: ${OPENROUTER_API_KEY:-}
+      STORE_MODEL_IN_DB: "False"
+    volumes:
+      - ./litellm/config.yaml:/app/config.yaml:ro
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  open-webui:
+    # Open WebUI 0.12.3
+    image: ghcr.io/open-webui/open-webui:main@sha256:4860ba005ae8f19f08d1e12b0868855b7b339ea0dad9927f196820fc0de04575
+    container_name: dev-ai-open-webui
+    restart: unless-stopped
+    network_mode: host
+    environment:
+      HOST: 127.0.0.1
+      PORT: 3001
+      ENABLE_OLLAMA_API: "false"
+      OPENAI_API_BASE_URL: http://127.0.0.1:4000/v1
+      OPENAI_API_KEY: ${LITELLM_OPENWEBUI_KEY:-}
+      RAG_EMBEDDING_ENGINE: openai
+      RAG_OPENAI_API_BASE_URL: http://127.0.0.1:4000/v1
+      RAG_OPENAI_API_KEY: ${LITELLM_OPENWEBUI_KEY:-}
+      RAG_EMBEDDING_MODEL: embed
+    volumes:
+      - openwebui:/app/backend/data
+    depends_on:
+      - litellm
+
+volumes:
+  pgdata:
+  openwebui:
