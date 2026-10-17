@@ -1,0 +1,15 @@
+[Unit]
+Description=devmem MCP memory server
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=%h/dev-ai-stack/devmem
+EnvironmentFile=%h/dev-ai-stack/.env
+ExecStart=%h/dev-ai-stack/devmem/.venv/bin/devmem serve
+Restart=on-failure
+RestartSec=2
+
+[Install]
+WantedBy=default.target
