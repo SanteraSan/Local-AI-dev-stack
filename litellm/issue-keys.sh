@@ -8,7 +8,8 @@ GATEWAY=${GATEWAY:-http://127.0.0.1:4000}
 MASTER=$(grep -E '^LITELLM_MASTER_KEY=' .env | cut -d= -f2-)
 [ -n "$MASTER" ] || { echo "LITELLM_MASTER_KEY is empty in .env" >&2; exit 1; }
 
-ALL_MODELS='["coder","fast","reasoner","reviewer","vision","embed"]'
+# Existing keys are updated by sync-key-models.sh. This script only fills empty variables.
+ALL_MODELS='["coder","fast","reasoner","reviewer","vision","embed","agent"]'
 
 issue() {
   local var=$1 alias=$2 models=$3

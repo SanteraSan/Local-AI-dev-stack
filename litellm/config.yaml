@@ -10,6 +10,12 @@ model_list:
       model: ollama_chat/qwen2.5-coder-3b-4k
       api_base: http://127.0.0.1:11434
       keep_alive: -1
+  # Tool-calling agents. Not resident with coder: both plus fast do not fit in 16 GB.
+  - model_name: agent
+    litellm_params:
+      model: ollama_chat/qwen3-14b-32k
+      api_base: http://127.0.0.1:11434
+      keep_alive: -1
   - model_name: reasoner
     litellm_params:
       model: ollama_chat/qwen3:14b
