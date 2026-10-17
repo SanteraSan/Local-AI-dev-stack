@@ -24,7 +24,6 @@ from devmem.config import (
     database_name,
     get_settings,
 )
-from devmem.embeddings import try_embed
 from devmem.importer import ImportSection
 from devmem.search import (
     candidate_limit,
@@ -503,10 +502,13 @@ def save_entry(
     project_row = require_project(conn, project)
     if task_id is not None:
         _require_task_in_project(conn, task_id, project_row["id"])
-    note = None
+    # The caller embeds before opening this connection. Never call the gateway here.
+    if embed and embedding is None:
+        raise RuntimeError(
+            "compute the embedding before opening a connection; "
+            "pass embedding or embed=False"
+        )
     vector = embedding
-    if embed and vector is None:
-        vector, note = try_embed(content)
     entry = _insert_entry(
         conn,
         project_id=project_row["id"],
@@ -522,7 +524,7 @@ def save_entry(
         model=model,
         embedding=vector,
     )
-    return {"entry": entry, "created": entry is not None, "note": note}
+    return {"entry": entry, "created": entry is not None, "note": None}
 
 
 def supersede_entry(
@@ -533,8 +535,16 @@ def supersede_entry(
     *,
     client: str | None = None,
     model: str | None = None,
+    embedding: list[float] | None = None,
+    embed: bool = True,
+    note: str | None = None,
 ) -> dict:
     reject_secrets_in(new_content, reason)
+    if embed and embedding is None:
+        raise RuntimeError(
+            "compute the embedding before opening a connection; "
+            "pass embedding or embed=False"
+        )
     row = conn.execute(
         f"SELECT {_ENTRY_SELECT} FROM entries WHERE id = %s FOR UPDATE",
         (entry_id,),
@@ -544,7 +554,6 @@ def supersede_entry(
     old = _entry_from_row(row)
     planned = plan_supersede(old, new_content, reason)
     reject_secrets_in(planned["refs"])
-    vector, note = try_embed(new_content)
     created = _insert_entry(
         conn,
         project_id=planned["project_id"],
@@ -558,7 +567,7 @@ def supersede_entry(
         content_hash=None,
         client=client,
         model=model,
-        embedding=vector,
+        embedding=embedding,
     )
     if created is None:
         raise RuntimeError("failed to insert the replacement entry")
@@ -656,17 +665,16 @@ def import_sections(
     project: str,
     sections: list[ImportSection],
     kind: str,
+    embeddings: list[list[float] | None],
 ) -> dict:
     require_kind(kind)
+    if len(embeddings) != len(sections):
+        raise ValueError("embeddings and sections length mismatch")
     project_row = require_project(conn, project)
     inserted = 0
     skipped = 0
-    note = None
-    for section in sections:
+    for section, vector in zip(sections, embeddings, strict=True):
         reject_secrets_in(section.content, section.source_path)
-        vector, section_note = try_embed(section.content)
-        if section_note and note is None:
-            note = section_note
         created = _insert_entry(
             conn,
             project_id=project_row["id"],
@@ -686,7 +694,7 @@ def import_sections(
             skipped += 1
         else:
             inserted += 1
-    return {"inserted": inserted, "skipped": skipped, "note": note}
+    return {"inserted": inserted, "skipped": skipped, "note": None}
 
 
 def export_project(conn: psycopg.Connection, project: str) -> list[dict]:

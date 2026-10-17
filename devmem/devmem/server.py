@@ -33,12 +33,15 @@ from devmem.db import (
     hybrid_search,
     import_sections,
     list_tasks,
+    require_kind,
     require_project,
     save_entry,
     supersede_entry,
     task_context,
     update_task,
 )
+from devmem.embeddings import try_embed
+from devmem.secrets_filter import reject_secrets_in
 from devmem.serialize import assemble_brief, encode_table, format_response, serialize
 
 _client_var: ContextVar[str | None] = ContextVar("devmem_client", default=None)
@@ -176,6 +179,16 @@ def _limit() -> int:
     return get_settings().devmem_content_char_limit
 
 
+def _embed_checked(text: str, *extra: object) -> tuple[list[float] | None, str | None]:
+    """Reject secrets, then embed. The gateway never sees unchecked text.
+
+    Call this before `connection()`. The database transaction must not wait on
+    the embedding HTTP call, and a secret must not leave the process.
+    """
+    reject_secrets_in(text, *extra)
+    return try_embed(text)
+
+
 def render_brief(
     project: str,
     fmt: str | None,
@@ -236,6 +249,12 @@ def save_memory(
     model: str | None = None,
     source: str = "agent",
 ) -> str:
+    require_kind(kind)
+    if source not in {"agent", "user", "import"}:
+        raise ValueError(f"invalid source {source!r}")
+    if not content or not str(content).strip():
+        raise ValueError("content is empty")
+    vector, note = _embed_checked(content, refs, commit_sha)
     with connection() as conn:
         result = save_entry(
             conn,
@@ -248,13 +267,15 @@ def save_memory(
             source=source,
             client=client,
             model=model,
+            embedding=vector,
+            embed=False,
         )
     entry = result["entry"]
     if entry is None:
         raise RuntimeError("entry was not stored")
     lines = [f"saved id={entry['id']}"]
-    if result["note"]:
-        lines.append(result["note"])
+    if note:
+        lines.append(note)
     return "\n".join(lines)
 
 
@@ -266,6 +287,11 @@ def supersede_memory(
     client: str | None = None,
     model: str | None = None,
 ) -> str:
+    if not new_content or not str(new_content).strip():
+        raise ValueError("new_content is empty")
+    if not (reason or "").strip():
+        raise ValueError("reason is empty")
+    vector, note = _embed_checked(new_content, reason)
     with connection() as conn:
         result = supersede_entry(
             conn,
@@ -274,6 +300,9 @@ def supersede_memory(
             reason,
             client=client,
             model=model,
+            embedding=vector,
+            embed=False,
+            note=note,
         )
     lines = [f"superseded id={result['old_id']} new_id={result['new_id']}"]
     if result["note"]:
@@ -340,6 +369,7 @@ def handoff_memory(
         f"next_steps:\n{next_steps.strip()}\n\n"
         f"open_questions:\n{open_questions.strip()}"
     )
+    vector, note = _embed_checked(summary, next_steps, open_questions, content)
     with connection() as conn:
         _task, project = task_context(conn, task_id)
         result = save_entry(
@@ -351,10 +381,12 @@ def handoff_memory(
             source="agent",
             client=client,
             model=model,
+            embedding=vector,
+            embed=False,
         )
     entry = result["entry"]
     body = serialize([entry], _fmt(fmt), content_limit=_limit())
-    return format_response(body, note=result["note"])
+    return format_response(body, note=note)
 
 
 def register_project(slug: str, root_path: str, git_remote: str | None = None) -> str:
@@ -370,8 +402,21 @@ def project_root_path(slug: str) -> str | None:
 
 
 def import_prepared(project: str, sections, kind: str) -> dict:
+    require_kind(kind)
+    for section in sections:
+        reject_secrets_in(section.content, section.source_path)
+    vectors: list[list[float] | None] = []
+    note = None
+    for section in sections:
+        vector, section_note = try_embed(section.content)
+        vectors.append(vector)
+        if section_note and note is None:
+            note = section_note
     with connection() as conn:
-        return import_sections(conn, project, sections, kind)
+        result = import_sections(conn, project, sections, kind, vectors)
+    if note:
+        result["note"] = note
+    return result
 
 
 def export_json_ready(project: str) -> list[dict]:
