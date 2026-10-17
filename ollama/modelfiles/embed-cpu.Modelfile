@@ -1,0 +1,2 @@
+FROM nomic-embed-text
+PARAMETER num_gpu 0

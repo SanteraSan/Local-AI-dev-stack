@@ -1,0 +1,20 @@
+# Secrets
+.env
+*.local.env
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+.pytest_cache/
+.ruff_cache/
+*.egg-info/
+
+# Local data and backups
+backups/
+*.dump
+devmem/exports/
+
+# Editors
+.idea/
+.vscode/
