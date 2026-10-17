@@ -234,36 +234,57 @@ def assemble_brief(
 ) -> str:
     """Fit a session brief into `token_limit * chars_per_token` characters.
 
-    Sections are added in priority order: tasks, the latest handoff, decisions,
-    then lessons. A section that does not fit is truncated to the remaining
-    budget and nothing after it is added.
+    The latest handoff comes first: it is what the next model needs. Then open
+    tasks, decisions, and lessons. A section that does not fit loses trailing
+    items and is serialized again, so JSON, CSV, and TOON stay parseable. If
+    even one item does not fit, the section is left out.
     """
     if token_limit < 1:
         raise ValueError("token_limit must be >= 1")
     budget = token_limit * chars_per_token
     blocks = [MARKER]
-    optional: list[str] = []
-    if tasks:
-        optional.append(_format_tasks(tasks))
+    sections: list[tuple[str, list[dict]]] = []
     if handoff is not None:
-        optional.append("handoff:\n" + serialize([handoff], fmt, content_limit=content_limit))
+        sections.append(("handoff", [handoff]))
+    if tasks:
+        sections.append(("tasks", list(tasks)))
     if decisions:
-        optional.append("decisions:\n" + serialize(decisions, fmt, content_limit=content_limit))
+        sections.append(("decisions", list(decisions)))
     if lessons:
-        optional.append("lessons:\n" + serialize(lessons, fmt, content_limit=content_limit))
+        sections.append(("lessons", list(lessons)))
 
-    for block in optional:
-        current = "\n".join(blocks)
-        candidate = current + "\n" + block
-        if len(candidate) <= budget:
+    for name, items in sections:
+        block = _fit_section(name, items, blocks, budget, fmt, content_limit)
+        if block is not None:
             blocks.append(block)
-            continue
-        remaining = budget - len(current) - 1
-        if remaining > 0:
-            blocks.append(block[:remaining])
-        break
 
+    while len("\n".join(blocks)) > budget and len(blocks) > 1:
+        blocks.pop()
     text = "\n".join(blocks)
     if len(text) > budget:
-        text = text[:budget]
+        # Only the marker can still be over the budget. Do not slice a section.
+        text = MARKER[:budget]
     return text
+
+
+def _section_text(name: str, items: list[dict], fmt: str, content_limit: int) -> str:
+    if name == "tasks":
+        return _format_tasks(items)
+    body = serialize(items, fmt, content_limit=content_limit)
+    return f"{name}:\n{body}"
+
+
+def _fit_section(
+    name: str,
+    items: list[dict],
+    blocks: list[str],
+    budget: int,
+    fmt: str,
+    content_limit: int,
+) -> str | None:
+    """Longest prefix of `items` whose serialization still fits, or nothing."""
+    for count in range(len(items), 0, -1):
+        block = _section_text(name, items[:count], fmt, content_limit)
+        if len("\n".join([*blocks, block])) <= budget:
+            return block
+    return None
