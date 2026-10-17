@@ -91,10 +91,30 @@ def collect_files(root: Path, path: str | None, pattern: str | None) -> list[Pat
     return files
 
 
-def prepare_file(path: Path) -> list[ImportSection]:
+def source_path_for(path: Path, root: Path | None) -> str:
+    """Path stored on an imported entry.
+
+    A file inside the project root is stored relative to that root, so the
+    hash does not depend on the checkout location and export does not leak a
+    home directory. Anything outside the root keeps its absolute path.
+    """
+    resolved = path.resolve()
+    if root is not None:
+        try:
+            return resolved.relative_to(root.resolve()).as_posix()
+        except ValueError:
+            return str(resolved)
+    return str(resolved)
+
+
+def prepare_file(path: Path, root: Path | None = None) -> list[ImportSection]:
     """Read one markdown file and reject it before any database write if it has a secret."""
-    text = path.read_text(encoding="utf-8")
-    source_path = str(path.resolve())
+    candidate = path
+    if root is not None and not candidate.is_absolute():
+        candidate = root / candidate
+    resolved = candidate.resolve()
+    text = resolved.read_text(encoding="utf-8")
+    source_path = source_path_for(resolved, root)
     prepared: list[ImportSection] = []
     for section in split_markdown(text):
         reject_secrets(section.content)

@@ -44,6 +44,28 @@ def test_reimport_hash_is_stable(tmp_path: Path):
     assert first[0].content_hash == content_hash(first[0].source_path, first[0].content)
 
 
+def test_equivalent_paths_share_a_relative_source(tmp_path: Path):
+    root = tmp_path / "checkout"
+    folder = root / "research"
+    folder.mkdir(parents=True)
+    target = folder / "notes.md"
+    target.write_text("# Note\n\nSynthetic body for the importer.\n", encoding="utf-8")
+
+    via_relative = prepare_file(Path("research/notes.md"), root)
+    via_absolute = prepare_file(target.resolve(), root)
+    via_dotdot = prepare_file(folder / ".." / "research" / "notes.md", root)
+
+    assert via_relative[0].source_path == "research/notes.md"
+    assert via_absolute[0].source_path == "research/notes.md"
+    assert via_dotdot[0].source_path == "research/notes.md"
+    assert via_relative[0].content_hash == via_absolute[0].content_hash == via_dotdot[0].content_hash
+
+    outside = tmp_path / "outside.md"
+    outside.write_text("# Out\n\nNot inside the checkout.\n", encoding="utf-8")
+    prepared = prepare_file(outside, root)
+    assert prepared[0].source_path == str(outside.resolve())
+
+
 def test_prepare_rejects_a_secret_without_touching_storage(tmp_path: Path):
     secret = "sk-" + ("a" * 40)
     path = tmp_path / "synthetic.md"

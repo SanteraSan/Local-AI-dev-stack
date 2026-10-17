@@ -138,7 +138,10 @@ def test_save_search_supersede_handoff_and_brief(db):
 
 
 def test_import_twice_is_deduplicated(db, tmp_path: Path):
-    path = tmp_path / "synthetic-notes.md"
+    root = tmp_path
+    folder = root / "research"
+    folder.mkdir()
+    path = folder / "synthetic-notes.md"
     path.write_text(
         "# Synthetic cache note\n\n"
         "The widget cache key is phase3importmarker and this file is not a project document.\n\n"
@@ -147,9 +150,12 @@ def test_import_twice_is_deduplicated(db, tmp_path: Path):
         encoding="utf-8",
     )
     render_brief("phase3import", None, register=True, task_title=None)
-    sections = prepare_file(path)
-    first = import_prepared("phase3import", sections, "imported")
-    second = import_prepared("phase3import", sections, "imported")
+    via_absolute = prepare_file(path.resolve(), root)
+    via_relative = prepare_file(Path("research/synthetic-notes.md"), root)
+    assert via_absolute[0].source_path == "research/synthetic-notes.md"
+    assert via_relative[0].content_hash == via_absolute[0].content_hash
+    first = import_prepared("phase3import", via_absolute, "imported")
+    second = import_prepared("phase3import", via_relative, "imported")
     assert first["inserted"] == 2
     assert second["inserted"] == 0
     assert second["skipped"] == 2
@@ -167,7 +173,7 @@ def test_import_twice_is_deduplicated(db, tmp_path: Path):
             ("%phase3importmarker%",),
         ).fetchone()
     assert row["source"] == "import"
-    assert row["source_path"]
+    assert row["source_path"] == "research/synthetic-notes.md"
     assert row["content_hash"]
 
 

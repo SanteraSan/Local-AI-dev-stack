@@ -68,7 +68,7 @@ def _cmd_import(args: argparse.Namespace) -> int:
     files = collect_files(root, args.path, args.glob)
     sections = []
     for path in files:
-        sections.extend(prepare_file(path))
+        sections.extend(prepare_file(path, root))
     result = import_prepared(args.project, sections, args.kind)
     print(
         f"imported files={len(files)} inserted={result['inserted']} skipped={result['skipped']}"
