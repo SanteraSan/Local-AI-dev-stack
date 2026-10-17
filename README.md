@@ -126,6 +126,7 @@ systemctl show ollama -p Environment | tr ' ' '\n' | grep OLLAMA_
 
 ## Документы
 
-- `docs/DECISIONS.md` — журнал архитектурных решений.
+- `docs/DECISIONS.md` — почему сделано так: решения с обоснованием.
+- `docs/JOURNAL.md` — лабораторный журнал: что пробовали, замеры, сбои, выводы.
 - `docs/BEFORE_PUBLIC.md` — что проверить и убрать перед тем, как открыть репозиторий для портфолио.
 - Полный план — `~/.cursor/plans/local_ai_dev_stack_95536ee7.plan.md`.
