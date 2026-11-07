@@ -26,14 +26,14 @@ RTX 5070 Ti 16 ГБ, Ryzen 9 9950X3D, 59 ГБ ОЗУ, Ollama 0.31.1 как syste
 | Псевдоним | Модель Ollama | Где живёт | Роль |
 | --- | --- | --- | --- |
 | `coder` | `qwen2.5-coder-14b-32k` | GPU, резидентная, 12 ГБ | Код и правки без инструментов |
-| `agent` | `qwen3-14b-32k` | GPU, резидентная, 11 ГБ | Агенты с tool calling |
+| `agent` | `qwen3.8:latest` | GPU и CPU, резидентная, около 18 ГБ | Агенты с tool calling |
 | `fast` | `qwen2.5-coder-3b-4k` | GPU, резидентная, 2,1 ГБ | Автодополнение |
 | `reasoner` | `qwen3:14b` | GPU, по запросу | План, декомпозиция |
 | `reviewer` | `gemma4:12b` | GPU, по запросу | Ревью |
 | `vision` | `qwen3-vl:8b` | GPU, по запросу | Изображения |
 | `embed` | `nomic-embed-text-cpu` | CPU | Эмбеддинги, 768 измерений |
 
-`coder` и `agent` резидентны по очереди: вместе с `fast` в 16 ГБ помещается только одна большая модель.
+`coder` и `agent` резидентны по очереди: вместе с `fast` в 16 ГБ помещается только одна большая модель. `qwen3.8:latest` — это Qwen 3.5 на 27.3B, Q4_K_M. На 16 ГБ она загружается примерно на 72% GPU и 28% CPU, поэтому прогрев профиля `agent` завершается кодом 2. `qwen3-14b-32k` остаётся локальной моделью Ollama, алиас `agent` на неё больше не смотрит.
 
 Варианты моделей собираются из `ollama/modelfiles/`:
 
@@ -50,7 +50,7 @@ ollama create nomic-embed-text-cpu  -f ollama/modelfiles/embed-cpu.Modelfile
 
 ```bash
 ./ollama/warmup.sh                 # coder, затем fast
-./ollama/warmup.sh agent           # qwen3-14b-32k, затем fast
+./ollama/warmup.sh agent           # qwen3.8:latest, затем fast; на 16 ГБ ожидается код 2
 ./ollama/warmup.sh --force-gpu     # fast с num_gpu=99
 ```
 

@@ -10,10 +10,11 @@ model_list:
       model: ollama_chat/qwen2.5-coder-3b-4k
       api_base: http://127.0.0.1:11434
       keep_alive: -1
-  # Tool-calling agents. Not resident with coder: both plus fast do not fit in 16 GB.
+  # Tool-calling agents. qwen3.8:latest is 27.3B Q4, about 18 GB loaded.
+  # On a 16 GB GPU part of it stays on CPU. Not resident together with coder.
   - model_name: agent
     litellm_params:
-      model: ollama_chat/qwen3-14b-32k
+      model: ollama_chat/qwen3.8:latest
       api_base: http://127.0.0.1:11434
       keep_alive: -1
   - model_name: reasoner

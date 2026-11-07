@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # Загружает рабочую пару: сначала большая модель профиля, потом fast.
-# Профили: coder (по умолчанию) — qwen2.5-coder-14b-32k; agent — qwen3-14b-32k.
+# Профили: coder (по умолчанию) — qwen2.5-coder-14b-32k; agent — qwen3.8:latest.
 # coder и agent вместе с fast в 16 ГБ не помещаются: смена профиля выгружает другую пару.
+# qwen3.8:latest на 16 ГБ целиком не встаёт, для профиля agent ожидаем код 2.
 # Ollama выбирает CPU/GPU один раз при загрузке. Если fast не на 100% GPU, скрипт
 # выгружает её и пробует ещё раз.
 # --force-gpu грузит fast с num_gpu=99 (все слои на GPU). Если видеопамяти
@@ -11,7 +12,7 @@ set -euo pipefail
 
 OLLAMA=http://127.0.0.1:11434
 CODER=qwen2.5-coder-14b-32k
-AGENT=qwen3-14b-32k
+AGENT=qwen3.8:latest
 FAST=qwen2.5-coder-3b-4k
 
 PROFILE=coder
