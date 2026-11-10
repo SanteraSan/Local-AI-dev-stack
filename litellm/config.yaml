@@ -1,5 +1,9 @@
 # Clients use role aliases only. To swap a model, change it here, not in clients.
 model_list:
+  - model_name: coder-cloud
+    litellm_params:
+      model: gemini/gemini-3.8-flash
+      api_key: os.environ/GEMINI_API_KEY
   - model_name: coder
     litellm_params:
       model: ollama_chat/qwen2.5-coder-14b-32k
@@ -10,11 +14,11 @@ model_list:
       model: ollama_chat/qwen2.5-coder-3b-4k
       api_base: http://127.0.0.1:11434
       keep_alive: -1
-  # Tool-calling agents. qwen3.8:latest is 27.3B Q4, about 18 GB loaded.
-  # On a 16 GB GPU part of it stays on CPU. Not resident together with coder.
+  # Tool-calling agents. qwen3:14b fits a 16 GB GPU and allows parallel slots.
+  # Not resident together with coder.
   - model_name: agent
     litellm_params:
-      model: ollama_chat/qwen3.8:latest
+      model: ollama_chat/qwen3:14b
       api_base: http://127.0.0.1:11434
       keep_alive: -1
   - model_name: reasoner
@@ -44,7 +48,7 @@ model_list:
 
 router_settings:
   num_retries: 1
-  timeout: 300
+  timeout: 600
   # fallbacks: [{"coder": ["coder-cloud"]}, {"reasoner": ["coder-cloud"]}]
 
 litellm_settings:
@@ -55,3 +59,5 @@ litellm_settings:
 general_settings:
   master_key: os.environ/LITELLM_MASTER_KEY
   database_url: os.environ/DATABASE_URL
+  # Клиент оборвал сокет: шлюз отменяет уже идущий запрос к Ollama и освобождает слот.
+  cancel_on_disconnect: true

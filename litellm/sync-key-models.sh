@@ -7,7 +7,7 @@ set -euo pipefail
 cd "$(dirname "$0")/.."
 GATEWAY=${GATEWAY:-http://127.0.0.1:4000}
 
-ALL_MODELS='["coder","fast","reasoner","reviewer","vision","embed","agent"]'
+ALL_MODELS='["coder","fast","reasoner","reviewer","vision","embed","agent","coder-cloud"]'
 EMBED_ONLY='["embed"]'
 
 python3 - "$GATEWAY" "$ALL_MODELS" "$EMBED_ONLY" << 'END_SYNC_PY'
